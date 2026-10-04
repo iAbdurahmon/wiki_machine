@@ -3,5 +3,8 @@
 action api : for database, ask for article names and dates, database to be filled beforehand
 rest api : for the HTML to be requested during use of the site
 
-curl -s -A "WikiMachine/0.1 (student project; your@email)" \
-  "https://en.wikipedia.org/w/api.php?action=query&prop=revisions&titles=Albert_Einstein&rvprop=ids|timestamp|user|comment&rvlimit=5&format=json&formatversion=2"
+
+use action api to get the different versions of the articles, put them in a database before anyone uses the site, in the database, use mariadb system versioned tables to save the active time of articles. using the revid; request the HTML of the site or store the HTML (to be resovled) using rest.api
+
+make a website frame for picking a specific date for the articles that we pick out
+render the inside of the frame with the html given

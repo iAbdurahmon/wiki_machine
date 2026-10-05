@@ -7,4 +7,24 @@ rest api : for the HTML to be requested during use of the site
 use action api to get the different versions of the articles, put them in a database before anyone uses the site, in the database, use mariadb system versioned tables to save the active time of articles. using the revid; request the HTML of the site or store the HTML (to be resovled) using rest.api
 
 make a website frame for picking a specific date for the articles that we pick out
-render the inside of the frame with the html given
+render the inside of the frame with the html given (somewhat done!)
+
+
+important things to add/modify in the HTML:
+
+    //add right after <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    
+    //just add
+    <link rel="stylesheet" href="https://en.wikipedia.org/w/load.php?lang=en&modules=skins.minerva.styles%7Csite.styles&only=styles&skin=minerva">
+
+    //just add
+    <style>
+    html, body { margin: 0; padding: 8px; }
+    </style>
+    
+    //modify
+    <!--<base href="//en.wikipedia.org/wiki/">--><base href="https://en.wikipedia.org/wiki/">
+
+    //modify
+    <link rel="stylesheet" href="https://en.wikipedia.org/w/load.php?lang=en&modules=site.styles&only=styles&skin=minerva">

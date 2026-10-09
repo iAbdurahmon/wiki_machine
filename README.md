@@ -10,21 +10,17 @@ make a website frame for picking a specific date for the articles that we pick o
 render the inside of the frame with the html given (somewhat done!)
 
 
-important things to add/modify in the HTML:
 
-    //add right after <head>
+put at the top of each HTML:
     <meta name="viewport" content="width=device-width, initial-scale=1">
     
-    //just add
     <link rel="stylesheet" href="https://en.wikipedia.org/w/load.php?lang=en&modules=skins.minerva.styles%7Csite.styles&only=styles&skin=minerva">
 
-    //just add
     <style>
     html, body { margin: 0; padding: 8px; }
     </style>
-    
-    //modify
-    <!--<base href="//en.wikipedia.org/wiki/">--><base href="https://en.wikipedia.org/wiki/">
+   
+    <base href="https://en.wikipedia.org/wiki/">
 
-    //modify
     <link rel="stylesheet" href="https://en.wikipedia.org/w/load.php?lang=en&modules=site.styles&only=styles&skin=minerva">
+    

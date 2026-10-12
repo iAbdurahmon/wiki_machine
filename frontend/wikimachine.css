@@ -7,8 +7,17 @@ body {
 }
 
 
-
-
+.introtext{
+    justify-self: start;
+    align-self: start;
+    padding-left: 20%;
+}
+.title{
+    margin-bottom: 0px;
+}
+.fakecopyright{
+    margin-top: 0px;
+}
 .window{
     width: 70vw;
     height: 70vh;

@@ -7,12 +7,43 @@
     <link rel="stylesheet" href="wikimachine.css">
 </head>
 <body>
-     
 
+    <h1 class="title introtext">Wiki Machine</h1>
+    <p class="introtext fakecopyright">from wikimachine, the free student project</p>
+
+    <p class="introtext">
+            <span>the wikimachine is a </span>
+            <a href="https://en.wikipedia.org/wiki/Student">student</a>
+            <span>project made by two students that lets the user rewind</span>
+            <a href="https://en.wikipedia.org/wiki/Time">time</a>
+            <span>and look at old</span> 
+            <a href="https://www.wikipedia.org">wikipedia </a>
+            <span>articles.</span>
+    </p>
+
+
+    <div class="inputs">
+        <select name="articles" id="articleselect">
+            <option value="article 1">article 1</option>
+            <option value="article 2">article 2</option>
+            <option value="article 3">article 3</option>
+            <option value="article 4">article 4</option>
+        </select>
+        <input type="date" id="dateselect">
+        <button id="submitbutton">show me!</button>
+    </div>
+
+    
     <div class="window">
-        <iframe class="window-content" src="revision.html"></iframe>
+        <iframe class="window-content" src="testwiki copy.html"></iframe>
     </div>
 
 
+
+
+
+
+
+    <script src="wikimachine.ts"></script>
 </body>
 </html>

@@ -7,3 +7,8 @@ __pycache__/
 .env
 node_modules/
 .DS_Store
+
+# одноразовые выгрузки для тестов
+old.html
+revision_old.html
+revision_2013.html

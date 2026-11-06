@@ -56,8 +56,25 @@ Windows installer sets a root password rather than using passwordless local auth
 Get-Content backend\schema.sql | mariadb -u root -p
 ```
 
-If `mariadb` is not on PATH, use the "MariaDB ... Command Prompt" shortcut the installer
-adds, or the bundled HeidiSQL and open schema.sql there.
+**"The term 'mariadb' is not recognized"** means PowerShell cannot find the client, not
+that MariaDB is missing. In order of likelihood:
+
+1. The terminal was open before MariaDB was installed. PowerShell reads PATH once at
+   startup. Close it, reopen, try `mariadb --version`. This is usually it.
+2. Use the "MariaDB ... Command Prompt" shortcut from the Start menu, where PATH is
+   already set.
+3. Find the client and add it to PATH yourself (the version in the path will differ):
+
+   ```powershell
+   Get-ChildItem "C:\Program Files\MariaDB*\bin\maria*.exe" | Select-Object FullName
+   [Environment]::SetEnvironmentVariable(
+       "Path", $env:Path + ";C:\Program Files\MariaDB 11.8\bin", "User")
+   ```
+
+   Then reopen the terminal.
+
+Older builds ship the client as `mysql.exe` rather than `mariadb.exe`; the arguments are
+the same. `Get-Service -Name "MariaDB*"` tells you whether the server is actually running.
 
 ## Fill the database
 

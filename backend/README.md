@@ -3,12 +3,34 @@
 The database stores identifiers only -- `page_id` and `revid`. HTML is fetched from
 Wikipedia on request and rewritten by the proxy, never stored.
 
+## Requirements
+
+- Python 3.10+
+- MariaDB new enough to support writing history rows. Check it directly rather than
+  going by version number -- the server must know this variable:
+
+  ```bash
+  mariadb -e "SHOW VARIABLES LIKE 'system_versioning_insert_history'"
+  ```
+
+  An empty result means the server is too old and the loader cannot write anything.
+  **MySQL will not work at all** -- it has no system-versioned tables.
+
 ## Setup
 
 ```bash
-brew services start mariadb
-mariadb < backend/schema.sql          # idempotent
+# macOS
+brew install mariadb && brew services start mariadb
+# Debian/Ubuntu
+sudo apt install mariadb-server && sudo systemctl start mariadb
+# Windows: install MariaDB from mariadb.org/download, it runs as a service
+
+python3 -m venv .venv
 .venv/bin/pip install -r backend/requirements.txt
+
+# Creates the database, the tables, and the `wiki` user the app logs in as.
+# Run it as a MariaDB administrator -- `sudo mariadb` if your account has no rights.
+mariadb < backend/schema.sql          # idempotent, safe to re-run
 ```
 
 Connection settings come from the environment, defaulting to the local dev user:

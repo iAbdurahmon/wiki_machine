@@ -4,8 +4,9 @@ This is an offline batch job, not part of the web app -- run it before anyone us
 site, as the README asks. It stores identifiers only (page_id + revid); the HTML is
 fetched from the REST API at display time by app.py.
 
+    python -m backend.loader                         # everything in articles.txt
     python -m backend.loader Agapanthus "Michael Jackson"
-    python -m backend.loader --reset Agapanthus      # wipe revisions first
+    python -m backend.loader --reset                 # wipe revisions first
     python -m backend.loader --max-revisions 500 "Albert Einstein"   # newest 500 only
 
 The one piece of real logic is build_intervals(): Wikipedia gives MOMENTS ("revision
@@ -35,6 +36,7 @@ else:  # allow `python backend/loader.py` as well as `python -m backend.loader`
     sys.path.insert(0, str(Path(__file__).parent))
     from db import connect, current_row_valid_to
 
+ARTICLE_LIST = Path(__file__).parent / "articles.txt"
 API = "https://en.wikipedia.org/w/api.php"
 # Wikimedia blocks default library user agents, so identify the project.
 USER_AGENT = "wiki_machine/0.1 (student project; https://github.com/iAbdurahmon/wiki_machine)"
@@ -183,9 +185,27 @@ def load(titles: list[str], reset: bool = False, max_revisions: int | None = Non
     conn.close()
 
 
+def read_article_list() -> list[str]:
+    """The shared list every machine loads, so databases come out the same."""
+    if not ARTICLE_LIST.exists():
+        raise SystemExit(f"no titles given and {ARTICLE_LIST.name} is missing")
+    titles = [
+        line.strip()
+        for line in ARTICLE_LIST.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+    if not titles:
+        raise SystemExit(f"{ARTICLE_LIST.name} lists no articles")
+    return titles
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("titles", nargs="+", help="article titles as they appear on Wikipedia")
+    parser.add_argument(
+        "titles",
+        nargs="*",
+        help="article titles as they appear on Wikipedia; defaults to articles.txt",
+    )
     parser.add_argument(
         "--reset", action="store_true", help="recreate article_revision before loading"
     )
@@ -195,7 +215,8 @@ def main() -> None:
         help="keep only this many of the most recent revisions per article",
     )
     args = parser.parse_args()
-    load(args.titles, reset=args.reset, max_revisions=args.max_revisions)
+    titles = args.titles or read_article_list()
+    load(titles, reset=args.reset, max_revisions=args.max_revisions)
 
 
 if __name__ == "__main__":

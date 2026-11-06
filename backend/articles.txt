@@ -1,0 +1,13 @@
+# Articles the project loads. One Wikipedia title per line, exactly as it appears in
+# the URL (underscores or spaces both work). Lines starting with # are ignored.
+#
+# This list is the shared one: everybody runs `python -m backend.loader` with no
+# arguments and ends up with the same database. Add a title here rather than loading
+# it only on your own machine.
+#
+# Cost is requests, not disk: the API returns 500 revisions per call, so a 30,000
+# revision article means ~60 calls. The rows themselves are about 40 bytes each.
+
+Agapanthus
+Michael Jackson
+Albert Einstein

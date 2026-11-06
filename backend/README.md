@@ -80,11 +80,23 @@ the same. `Get-Service -Name "MariaDB*"` tells you whether the server is actuall
 
 An offline batch job -- run it before anyone uses the site.
 
+The database is not in git, so every machine loads its own copy. `backend/articles.txt`
+is the shared list that keeps those copies the same: add a title there rather than
+loading it only locally, and everyone gets it on their next run.
+
 ```bash
-.venv/bin/python -m backend.loader Agapanthus "Michael Jackson"
-.venv/bin/python -m backend.loader --reset Agapanthus          # wipe revisions first
+.venv/bin/python -m backend.loader                             # everything in articles.txt
+.venv/bin/python -m backend.loader Agapanthus "Michael Jackson"  # or name them directly
+.venv/bin/python -m backend.loader --reset                     # wipe revisions first
 .venv/bin/python -m backend.loader --max-revisions 1500 "Albert Einstein"
 ```
+
+Titles must match Wikipedia's own, the way they appear in the URL. A title that does not
+exist is reported and skipped, the rest still load.
+
+Removing an article takes `--reset` and a full reload: a plain DELETE on a versioned
+table moves rows into history instead of erasing them, and DELETE HISTORY accepts no
+WHERE clause, so there is no way to purge just one article.
 
 `--max-revisions` keeps the most RECENT revisions. Re-running is safe, and extending an
 article further back in time is safe too, because an interval is fixed by the timestamps

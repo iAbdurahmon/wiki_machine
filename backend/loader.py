@@ -30,10 +30,10 @@ from pathlib import Path
 import httpx
 
 if __package__:
-    from .db import CURRENT_ROW_VALID_TO, connect
+    from .db import connect, current_row_valid_to
 else:  # allow `python backend/loader.py` as well as `python -m backend.loader`
     sys.path.insert(0, str(Path(__file__).parent))
-    from db import CURRENT_ROW_VALID_TO, connect
+    from db import connect, current_row_valid_to
 
 API = "https://en.wikipedia.org/w/api.php"
 # Wikimedia blocks default library user agents, so identify the project.
@@ -84,8 +84,11 @@ def fetch_revisions(client: httpx.Client, title: str, max_revisions: int | None 
     return page_id, canonical, revisions
 
 
-def build_intervals(revisions: list[tuple[int, str]]):
-    """Turn (revid, timestamp) moments into (revid, valid_from, valid_to) intervals."""
+def build_intervals(revisions: list[tuple[int, str]], sentinel: str):
+    """Turn (revid, timestamp) moments into (revid, valid_from, valid_to) intervals.
+
+    `sentinel` is the server's own "this row is current" value -- see db.current_row_valid_to.
+    """
     rows = []
     for index, (revid, timestamp) in enumerate(revisions):
         valid_from = _to_sql(timestamp)
@@ -96,7 +99,7 @@ def build_intervals(revisions: list[tuple[int, str]]):
             if valid_to <= valid_from:
                 continue
         else:
-            valid_to = CURRENT_ROW_VALID_TO
+            valid_to = sentinel
         rows.append((revid, valid_from, valid_to))
     return rows
 
@@ -107,14 +110,24 @@ def _to_sql(timestamp: str) -> str:
 
 
 def reset_revisions(conn) -> None:
-    """Recreate article_revision. DROP is the only way to purge versioned history."""
-    statements = (Path(__file__).parent / "schema.sql").read_text(encoding="utf-8")
-    statements = "\n".join(
-        line for line in statements.splitlines() if not line.strip().startswith("--")
+    """Recreate article_revision. DROP is the only way to purge versioned history.
+
+    Replays only the CREATE TABLE statements from schema.sql -- the account the loader
+    runs as owns the tables but deliberately has no CREATE USER or database-level rights,
+    which the rest of that file needs.
+    """
+    source = (Path(__file__).parent / "schema.sql").read_text(encoding="utf-8")
+    source = "\n".join(
+        line for line in source.splitlines() if not line.strip().startswith("--")
     )
+    statements = [
+        statement
+        for statement in source.split(";")
+        if statement.strip().upper().startswith("CREATE TABLE")
+    ]
     with conn.cursor() as cur:
         cur.execute("DROP TABLE IF EXISTS article_revision")
-        for statement in filter(str.strip, statements.split(";")):
+        for statement in statements:
             cur.execute(statement)
     print("article_revision recreated")
 
@@ -123,6 +136,7 @@ def load(titles: list[str], reset: bool = False, max_revisions: int | None = Non
     conn = connect(for_loading=True)
     if reset:
         reset_revisions(conn)
+    sentinel = current_row_valid_to(conn)
 
     with httpx.Client(headers={"User-Agent": USER_AGENT}, timeout=30.0) as client:
         for title in titles:
@@ -133,7 +147,7 @@ def load(titles: list[str], reset: bool = False, max_revisions: int | None = Non
                 print(f"  skipped: {error}")
                 continue
 
-            rows = build_intervals(revisions)
+            rows = build_intervals(revisions, sentinel)
             with conn.cursor() as cur:
                 cur.execute(
                     "INSERT INTO articles (page_id, title) VALUES (%s, %s) "
@@ -154,6 +168,18 @@ def load(titles: list[str], reset: bool = False, max_revisions: int | None = Non
                 f"inserted={inserted}  skipped={len(rows) - inserted}  "
                 f"span={rows[0][1][:10]}..{rows[-1][1][:10]}"
             )
+
+            # A current row must now be visible to a PLAIN select. If it is not, the
+            # sentinel was wrong and every row landed in history -- which breaks
+            # silently, so fail loudly here instead.
+            with conn.cursor() as cur:
+                cur.execute("SELECT revid FROM article_revision WHERE page_id = %s", (page_id,))
+                current = cur.fetchone()
+            if current is None or current["revid"] != rows[-1][0]:
+                raise RuntimeError(
+                    f"{canonical}: no current row after loading. The server's sentinel is "
+                    f"{sentinel!r}; rows went into history and a plain SELECT cannot see them."
+                )
     conn.close()
 
 

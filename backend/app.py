@@ -26,10 +26,10 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 if __package__:
-    from .db import CURRENT_ROW_VALID_TO, connect
+    from .db import connect, current_row_valid_to
 else:
     sys.path.insert(0, str(Path(__file__).parent))
-    from db import CURRENT_ROW_VALID_TO, connect
+    from db import connect, current_row_valid_to
 
 FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
 USER_AGENT = "wiki_machine/0.1 (student project; https://github.com/iAbdurahmon/wiki_machine)"
@@ -96,6 +96,7 @@ def revision_at(page_id: int, date: date_type = Query(description="YYYY-MM-DD"))
                 (page_id,),
             )
             row = cur.fetchone()
+        sentinel = current_row_valid_to(conn)
     finally:
         conn.close()
 
@@ -103,7 +104,7 @@ def revision_at(page_id: int, date: date_type = Query(description="YYYY-MM-DD"))
         raise HTTPException(
             404, f"no revision of page {page_id} was live on {date} -- too early, or not loaded"
         )
-    row["is_current"] = str(row["valid_to"]) == CURRENT_ROW_VALID_TO
+    row["is_current"] = row["valid_to"].strftime("%Y-%m-%d %H:%M:%S.%f") == sentinel
     row["html_url"] = f"/api/revision/{row['revid']}/html"
     return row
 

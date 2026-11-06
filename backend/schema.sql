@@ -20,6 +20,13 @@
 CREATE DATABASE IF NOT EXISTS wiki_machine
   CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
+-- Приложение ходит под отдельным пользователем, а не под админским. Пароль здесь
+-- локальный, для разработки -- на боевом сервере задаётся через переменные окружения
+-- (см. DB_* в db.py). Этот файл надо запускать от администратора MariaDB.
+CREATE USER IF NOT EXISTS 'wiki'@'localhost' IDENTIFIED BY 'wiki_dev_pass';
+GRANT ALL PRIVILEGES ON wiki_machine.* TO 'wiki'@'localhost';
+FLUSH PRIVILEGES;
+
 USE wiki_machine;
 
 CREATE TABLE IF NOT EXISTS articles (

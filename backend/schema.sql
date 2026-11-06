@@ -12,17 +12,18 @@
 --   SET time_zone = '+00:00'; -- Wikipedia timestamps are in UTC
 --   SET @@system_versioning_insert_history = ON; -- allow explicit valid_from/valid_to
 --
--- Sentinel valid_to value for the CURRENT revision (MariaDB 13, unsigned 32-bit TIMESTAMP):
---   '2106-02-07 06:28:15.999999'
--- Only with this value is the row considered current. Any other value means the row
--- moves to history and is invisible to a standard SELECT without FOR SYSTEM_TIME.
+-- The CURRENT revision needs a sentinel valid_to: the largest TIMESTAMP the server
+-- supports ('2106-02-07 06:28:15.999999' here, but older MariaDB stops at 2038).
+-- Only with that exact value is a row considered current -- anything else puts it in
+-- history, invisible to a plain SELECT, with no error. Never hardcode it: the loader
+-- asks the server via db.current_row_valid_to().
 
 CREATE DATABASE IF NOT EXISTS wiki_machine
   CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
--- Приложение ходит под отдельным пользователем, а не под админским. Пароль здесь
--- локальный, для разработки -- на боевом сервере задаётся через переменные окружения
--- (см. DB_* в db.py). Этот файл надо запускать от администратора MariaDB.
+-- The app logs in as its own user, not as an administrator. This password is a local
+-- development one; in production it comes from the environment (see DB_* in db.py).
+-- Run this file as a MariaDB administrator -- creating a user needs those rights.
 CREATE USER IF NOT EXISTS 'wiki'@'localhost' IDENTIFIED BY 'wiki_dev_pass';
 GRANT ALL PRIVILEGES ON wiki_machine.* TO 'wiki'@'localhost';
 FLUSH PRIVILEGES;

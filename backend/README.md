@@ -25,6 +25,8 @@ brew install mariadb && brew services start mariadb
 sudo apt install mariadb-server && sudo systemctl start mariadb
 # Windows: install MariaDB from mariadb.org/download, it runs as a service
 
+# .venv is gitignored, so a fresh clone has none -- create it. venv ships with
+# Python itself; on Debian/Ubuntu it may need `sudo apt install python3-venv`.
 python3 -m venv .venv
 .venv/bin/pip install -r backend/requirements.txt
 
@@ -35,6 +37,27 @@ mariadb < backend/schema.sql          # idempotent, safe to re-run
 
 Connection settings come from the environment, defaulting to the local dev user:
 `DB_HOST=127.0.0.1 DB_PORT=3306 DB_USER=wiki DB_PASSWORD=wiki_dev_pass DB_NAME=wiki_machine`.
+
+### On Windows
+
+Same steps, different paths -- `.venv\Scripts\` instead of `.venv/bin/`:
+
+```powershell
+python -m venv .venv
+.venv\Scripts\pip install -r backend\requirements.txt
+.venv\Scripts\python -m backend.loader Agapanthus
+.venv\Scripts\uvicorn backend.app:app --reload
+```
+
+PowerShell has no `<` input redirection, so loading the schema needs a pipe. MariaDB's
+Windows installer sets a root password rather than using passwordless local auth:
+
+```powershell
+Get-Content backend\schema.sql | mariadb -u root -p
+```
+
+If `mariadb` is not on PATH, use the "MariaDB ... Command Prompt" shortcut the installer
+adds, or the bundled HeidiSQL and open schema.sql there.
 
 ## Fill the database
 

@@ -52,8 +52,8 @@ If that says *access denied*, your account has no admin rights on the server: us
 ### 4. Fill it from Wikipedia
 
 Nothing works before this — the site reads the database, not Wikipedia's search. It
-takes about a minute: ~115 API calls for the four articles in the list, which come out
-as 56,000 rows and roughly 3 MB.
+takes two or three minutes: ~170 API calls for the five articles in the list, which come
+out as 82,000 rows and 9 MB. (Storing the HTML instead would be tens of gigabytes.)
 
 ```bash
 .venv/bin/python -m backend.loader
@@ -90,8 +90,11 @@ not a missing install — [backend/README.md](backend/README.md#on-windows) walk
 
 ## Adding more articles
 
-Put the title in [`backend/articles.txt`](backend/articles.txt), one per line, spelled
-the way Wikipedia spells it. Then:
+**Any article on English Wikipedia works** — nothing has to be prepared for it. Put the
+title in [`backend/articles.txt`](backend/articles.txt), one per line, spelled the way
+Wikipedia spells it in the URL. Redirects are followed, so `NYC` loads New York City,
+and the first letter is case-insensitive. A title that does not exist is reported and
+skipped, and the rest still load. Then:
 
 ```bash
 .venv/bin/python -m backend.loader
@@ -138,7 +141,9 @@ SYSTEM VERSIONING`, so MariaDB keeps every superseded row in a hidden history pa
 and answers `FOR SYSTEM_TIME AS OF TIMESTAMP '...'` with the row that was live then.
 Putting the title in the same table would duplicate it across all 33,943 Michael Jackson
 rows, and the question "which revision was live then" is one `SELECT`, not a join in a
-loop.
+loop. An article is identified by `page_id`, never by its title — Wikipedia upper-cases
+only a title's first letter, so `tashkent` and `Tashkent` are the same article while
+`michael jackson` and `Michael Jackson` are two different pages.
 
 **Why not one date column?** One column gives you the moment a revision appeared. To
 find the one that was live on a date you would then need a correlated subquery picking

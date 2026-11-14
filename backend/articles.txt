@@ -1,5 +1,7 @@
-# Articles the project loads. One Wikipedia title per line, exactly as it appears in the
-# URL (underscores or spaces both work). Lines starting with # are ignored.
+# Articles the project loads. One Wikipedia title per line. Any article on English
+# Wikipedia works -- nothing has to be prepared for it. Underscores or spaces both
+# work, the first letter is case-insensitive, and redirects are followed (writing
+# NYC loads New York City). Lines starting with # are ignored.
 #
 # TO ADD AN ARTICLE: write its title below, then run
 #
@@ -18,3 +20,4 @@ Agapanthus
 Michael Jackson
 Albert Einstein
 Tashkent
+New York City

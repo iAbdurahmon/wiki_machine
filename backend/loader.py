@@ -50,6 +50,10 @@ API = "https://en.wikipedia.org/w/api.php"
 # Wikimedia blocks default library user agents, so identify the project.
 USER_AGENT = "wiki_machine/0.1 (student project; https://github.com/iAbdurahmon/wiki_machine)"
 REVISIONS_PER_REQUEST = 500  # the API cap for ordinary accounts
+SKIPPED = (
+    "already in the database -- skipped. Revisions made since it was loaded cannot "
+    "be appended; --reset reloads everything."
+)
 
 
 def fetch_revisions(client: httpx.Client, title: str, max_revisions: int | None = None):
@@ -60,6 +64,10 @@ def fetch_revisions(client: httpx.Client, title: str, max_revisions: int | None 
         "formatversion": "2",
         "prop": "revisions",
         "titles": title,
+        # Follow redirects. Without this, "NYC" loads the redirect PAGE -- a few
+        # revisions whose content is "#REDIRECT [[New York City]]" -- rather than the
+        # city, and the iframe shows a stub. page["title"] then carries the target.
+        "redirects": "1",
         "rvprop": "ids|timestamp",
         # Newest first, so that --max-revisions keeps the RECENT history and drops the
         # ancient part. The other direction would leave the sentinel on a decades-old
@@ -150,24 +158,28 @@ def load(titles: list[str], reset: bool = False, max_revisions: int | None = Non
     sentinel = current_row_valid_to(conn)
     # --reset means "load everything again", so nothing is skipped. Note that it
     # recreates article_revision but not articles, so the titles are still in there --
-    # this cannot be left to loaded_titles() coming back empty.
-    already = set() if reset else loaded_titles(conn)
+    # this cannot be left to loaded_articles() coming back empty.
+    already, already_ids = (set(), set()) if reset else loaded_articles(conn)
 
     with httpx.Client(headers={"User-Agent": USER_AGENT}, timeout=30.0) as client:
         for title in titles:
             print(f"\n{title}")
-            # Underscores and spaces are the same title to Wikipedia, but not to a
-            # string compare -- articles.txt allows either spelling.
+            # Fast path: an exact title match saves the API calls. Underscores and
+            # spaces are the same title to Wikipedia, but not to a string compare.
             if title.replace("_", " ") in already:
-                print(
-                    "  already in the database -- skipped. Revisions made since it was "
-                    "loaded cannot be appended; --reset reloads everything."
-                )
+                print(f"  {SKIPPED}")
                 continue
             try:
                 page_id, canonical, revisions = fetch_revisions(client, title, max_revisions)
             except LookupError as error:
                 print(f"  skipped: {error}")
+                continue
+            if canonical != title:
+                print(f"  -> {canonical}")
+            # The real check, now that the identity is known and before anything is
+            # written: a different spelling, or a redirect, reaches a loaded article.
+            if page_id in already_ids:
+                print(f"  {SKIPPED}")
                 continue
 
             rows = build_intervals(revisions, sentinel)
@@ -206,11 +218,19 @@ def load(titles: list[str], reset: bool = False, max_revisions: int | None = Non
     conn.close()
 
 
-def loaded_titles(conn) -> set[str]:
-    """Titles already in the database, so a plain run only fetches what is new."""
+def loaded_articles(conn) -> tuple[set[str], set[int]]:
+    """What is already loaded, by title and by page_id.
+
+    Both are needed. The title match avoids the API calls entirely, but it cannot be
+    trusted on its own: Wikipedia only upper-cases the FIRST letter of a title, so
+    "tashkent" is a perfectly good way to ask for the stored "Tashkent" and would slip
+    past a string compare. page_id is the real identity, and it is only known after the
+    fetch -- which is still before anything is written.
+    """
     with conn.cursor() as cur:
-        cur.execute("SELECT title FROM articles")
-        return {row["title"] for row in cur.fetchall()}
+        cur.execute("SELECT page_id, title FROM articles")
+        rows = cur.fetchall()
+    return {row["title"] for row in rows}, {row["page_id"] for row in rows}
 
 
 def read_article_list() -> list[str]:

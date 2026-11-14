@@ -5,7 +5,7 @@
 Serves three endpoints plus the frontend itself, so everything is same-origin:
 
     GET /api/articles                 -> list for the <select>
-    GET /api/revision?page_id=&date=  -> which revision was live on that date
+    GET /api/revision?page_id=&date=  -> which revision was live at the end of that date
     GET /api/revision/{revid}/html    -> that revision's HTML, <head> patched
 
 The HTML is never stored: the database holds identifiers only, and this process fetches
@@ -35,6 +35,13 @@ FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
 USER_AGENT = "wiki_machine/0.1 (student project; https://github.com/iAbdurahmon/wiki_machine)"
 REST_HTML = "https://en.wikipedia.org/w/rest.php/v1/revision/{revid}/html"
 FULL_PAGE = "https://en.wikipedia.org/w/index.php?oldid={revid}"
+
+# A date means the END of that day, not its first instant. Asking at 00:00 misses the
+# day an article was created: Michael Jackson's first revision landed at 07:48, so
+# 2001-10-25 00:00 found nothing -- and that was the very first day the date picker
+# offered, which made its own lower bound answer "too early". The end of the day also
+# reads the way a user means it: show the article as it stood on that date.
+END_OF_DAY = "23:59:59.999999"
 
 MINERVA_CSS = (
     "https://en.wikipedia.org/w/load.php?lang=en"
@@ -77,7 +84,7 @@ def list_articles():
 
 @app.get("/api/revision")
 def revision_at(page_id: int, date: date_type = Query(description="YYYY-MM-DD")):
-    """Which revision was live at 00:00 UTC on `date`.
+    """Which revision was live at the end of `date` (23:59:59.999999 UTC).
 
     This is the query the whole schema exists for. The date is interpolated rather than
     bound as a parameter because FOR SYSTEM_TIME takes no placeholder; FastAPI has
@@ -89,7 +96,7 @@ def revision_at(page_id: int, date: date_type = Query(description="YYYY-MM-DD"))
             cur.execute(
                 f"""
                 SELECT r.page_id, r.revid, r.valid_from, r.valid_to, a.title
-                FROM article_revision FOR SYSTEM_TIME AS OF TIMESTAMP '{date} 00:00:00' r
+                FROM article_revision FOR SYSTEM_TIME AS OF TIMESTAMP '{date} {END_OF_DAY}' r
                 JOIN articles a ON a.page_id = r.page_id
                 WHERE r.page_id = %s
                 """,
@@ -102,7 +109,9 @@ def revision_at(page_id: int, date: date_type = Query(description="YYYY-MM-DD"))
 
     if row is None:
         raise HTTPException(
-            404, f"no revision of page {page_id} was live on {date} -- too early, or not loaded"
+            404,
+            f"page {page_id} had no revision on {date} -- the article did not exist yet, "
+            f"or it is not loaded",
         )
     row["is_current"] = row["valid_to"].strftime("%Y-%m-%d %H:%M:%S.%f") == sentinel
     row["html_url"] = f"/api/revision/{row['revid']}/html"

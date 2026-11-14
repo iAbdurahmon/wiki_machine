@@ -106,3 +106,4 @@ dateInput.addEventListener("change", show);
 submitButton.addEventListener("click", show);
 
 loadArticles();
+

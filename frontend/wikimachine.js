@@ -20,7 +20,7 @@ const frame = document.querySelector(".window-content");
 const API = location.protocol === "file:" ? "http://127.0.0.1:8000" : "";
 
 const status = document.createElement("p");
-status.className = "introtext";
+status.className = "revinfo";
 document.querySelector(".inputs").after(status);
 
 function setStatus(message, isError = false) {

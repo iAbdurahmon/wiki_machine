@@ -7,6 +7,19 @@ body {
 }
 
 
+.tut{
+    place-items: left;
+    justify-self: start;
+    align-self: start;
+    padding-left: 20%;
+    margin-top: 3px;
+    margin-bottom: 3px;
+
+}
+
+.revinfo{
+    font-size: smaller;
+}
 .introtext{
     justify-self: start;
     align-self: start;
@@ -25,6 +38,7 @@ body {
     border: 2px black solid;
     overflow: hidden;
     position:relative;
+    margin-bottom: 5%;
 }
 
 .window-content{
@@ -37,4 +51,7 @@ transform: scale(0.3333);
 transform-origin: top left;
 zoom: 300%;
 
+}
+.inputs{
+    margin-top: 10px;
 }

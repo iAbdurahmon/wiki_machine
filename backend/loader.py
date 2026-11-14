@@ -4,22 +4,31 @@ This is an offline batch job, not part of the web app -- run it before anyone us
 site, as the README asks. It stores identifiers only (page_id + revid); the HTML is
 fetched from the REST API at display time by app.py.
 
-    python -m backend.loader                         # everything in articles.txt
+    python -m backend.loader                         # articles.txt, skipping what is loaded
     python -m backend.loader Agapanthus "Michael Jackson"
-    python -m backend.loader --reset                 # wipe revisions first
-    python -m backend.loader --max-revisions 500 "Albert Einstein"   # newest 500 only
+    python -m backend.loader --reset                 # wipe revisions and load the list again
+    python -m backend.loader --reset --max-revisions 500   # newest 500 each, quick to test
+
+To add an article: put its title in articles.txt and run the loader. Articles already
+in the database are skipped, so that run only fetches the new one -- which matters,
+because re-reading Michael Jackson is 68 API calls.
 
 The one piece of real logic is build_intervals(): Wikipedia gives MOMENTS ("revision
 764138197 was created at 2017-02-07") but the schema wants INTERVALS ("it was live from
 2017-02-07 until 2017-03-19"). The closing bound of each revision is the timestamp of
 the next one; the newest revision gets the sentinel that marks a row current.
 
-Re-running on an article that already has rows is safe -- PRIMARY KEY (page_id) is
-implicitly (page_id, valid_to) on a versioned table, so repeated intervals collide and
-are skipped. But topping up an article with NEW revisions is NOT supported: the stored
-newest row still claims the sentinel and would overlap. Use --reset for that, which
-recreates the table (DELETE alone cannot purge history selectively -- DELETE HISTORY
-takes no WHERE clause).
+Skipping a loaded article is a correctness guard, not just a speed one. Re-reading it
+from the API brings back revisions made since the last load, and those cannot be
+appended. PRIMARY KEY (page_id) is implicitly (page_id, valid_to) on a versioned table,
+so the new current row collides with the stored one and is dropped -- while the
+intermediate intervals insert fine and OVERLAP it. Two rows are then live at the same
+instant, FOR SYSTEM_TIME AS OF returns both, and the API quietly reads one of them.
+
+So topping an article up means --reset: load the whole list again from scratch. There is
+no cheaper way. Repairing the stored current row would take an UPDATE or DELETE, and on a
+versioned table both write the server's own clock into valid_to rather than the value we
+need (and DELETE HISTORY takes no WHERE clause, so history cannot be purged per article).
 """
 
 import argparse
@@ -139,10 +148,22 @@ def load(titles: list[str], reset: bool = False, max_revisions: int | None = Non
     if reset:
         reset_revisions(conn)
     sentinel = current_row_valid_to(conn)
+    # --reset means "load everything again", so nothing is skipped. Note that it
+    # recreates article_revision but not articles, so the titles are still in there --
+    # this cannot be left to loaded_titles() coming back empty.
+    already = set() if reset else loaded_titles(conn)
 
     with httpx.Client(headers={"User-Agent": USER_AGENT}, timeout=30.0) as client:
         for title in titles:
             print(f"\n{title}")
+            # Underscores and spaces are the same title to Wikipedia, but not to a
+            # string compare -- articles.txt allows either spelling.
+            if title.replace("_", " ") in already:
+                print(
+                    "  already in the database -- skipped. Revisions made since it was "
+                    "loaded cannot be appended; --reset reloads everything."
+                )
+                continue
             try:
                 page_id, canonical, revisions = fetch_revisions(client, title, max_revisions)
             except LookupError as error:
@@ -185,6 +206,13 @@ def load(titles: list[str], reset: bool = False, max_revisions: int | None = Non
     conn.close()
 
 
+def loaded_titles(conn) -> set[str]:
+    """Titles already in the database, so a plain run only fetches what is new."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT title FROM articles")
+        return {row["title"] for row in cur.fetchall()}
+
+
 def read_article_list() -> list[str]:
     """The shared list every machine loads, so databases come out the same."""
     if not ARTICLE_LIST.exists():
@@ -207,7 +235,9 @@ def main() -> None:
         help="article titles as they appear on Wikipedia; defaults to articles.txt",
     )
     parser.add_argument(
-        "--reset", action="store_true", help="recreate article_revision before loading"
+        "--reset",
+        action="store_true",
+        help="recreate article_revision and load every title again from scratch",
     )
     parser.add_argument(
         "--max-revisions",

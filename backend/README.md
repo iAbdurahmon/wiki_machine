@@ -1,56 +1,51 @@
 # backend
 
-The database stores identifiers only -- `page_id` and `revid`. HTML is fetched from
+Install and run instructions are in the [root README](../README.md). This file is the
+deeper notes: what the server must support, what to do when something fails, and the
+constraints that are not obvious from reading the code.
+
+The database stores identifiers only — `page_id` and `revid`. HTML is fetched from
 Wikipedia on request and rewritten by the proxy, never stored.
 
-## Requirements
+## What MariaDB has to support
 
-- Python 3.10+
-- MariaDB new enough to support writing history rows. Check it directly rather than
-  going by version number -- the server must know this variable:
-
-  ```bash
-  mariadb -e "SHOW VARIABLES LIKE 'system_versioning_insert_history'"
-  ```
-
-  An empty result means the server is too old and the loader cannot write anything.
-  **MySQL will not work at all** -- it has no system-versioned tables.
-
-## Setup
+Check the server directly rather than going by version number. It must know this
+variable, which is what lets the loader write history rows:
 
 ```bash
-# macOS
-brew install mariadb && brew services start mariadb
-# Debian/Ubuntu
-sudo apt install mariadb-server && sudo systemctl start mariadb
-# Windows: install MariaDB from mariadb.org/download, it runs as a service
-
-# .venv is gitignored, so a fresh clone has none -- create it. venv ships with
-# Python itself; on Debian/Ubuntu it may need `sudo apt install python3-venv`.
-python3 -m venv .venv
-.venv/bin/pip install -r backend/requirements.txt
-
-# Creates the database, the tables, and the `wiki` user the app logs in as.
-# Run it as a MariaDB administrator -- `sudo mariadb` if your account has no rights.
-mariadb < backend/schema.sql          # idempotent, safe to re-run
+mariadb -e "SHOW VARIABLES LIKE 'system_versioning_insert_history'"
 ```
 
-Connection settings come from the environment, defaulting to the local dev user:
-`DB_HOST=127.0.0.1 DB_PORT=3306 DB_USER=wiki DB_PASSWORD=wiki_dev_pass DB_NAME=wiki_machine`.
+An empty result means the server is too old and the loader cannot write anything.
+**MySQL will not work at all** — it has no system-versioned tables.
+
+## Troubleshooting
+
+### `ERROR 1698: Access denied for user 'root'@'localhost'`
+
+On macOS and Linux the local MariaDB uses unix_socket authentication, so there is no
+root password to give. Either run `mariadb` as your own user (Homebrew grants it full
+rights) or use `sudo mariadb`.
+
+### `ERROR 2002 (HY000): Can't connect to server on 'localhost' (10061)`
+
+The server is not running. `brew services start mariadb` on macOS,
+`sudo systemctl start mariadb` on Linux, `Get-Service -Name "MariaDB*"` to check on
+Windows. The same thing reaches the app as PyMySQL's
+`(2003, "Can't connect to MySQL server on '127.0.0.1'")` and every endpoint returning
+HTTP 500.
+
+### `Access denied for user 'wiki'@'localhost'`
+
+The `wiki` account does not exist yet, which means `schema.sql` has not been run against
+this server — see step 3 of the root README. A clone from before the schema created that
+user needs a `git pull` first.
 
 ### On Windows
 
-Same steps, different paths -- `.venv\Scripts\` instead of `.venv/bin/`:
-
-```powershell
-python -m venv .venv
-.venv\Scripts\pip install -r backend\requirements.txt
-.venv\Scripts\python -m backend.loader Agapanthus
-.venv\Scripts\uvicorn backend.app:app --reload
-```
-
-PowerShell has no `<` input redirection, so loading the schema needs a pipe. MariaDB's
-Windows installer sets a root password rather than using passwordless local auth:
+PowerShell has no `<` input redirection, so the schema goes in through a pipe, and
+MariaDB's Windows installer sets a root password rather than using passwordless local
+auth:
 
 ```powershell
 Get-Content backend\schema.sql | mariadb -u root -p
@@ -63,106 +58,70 @@ that MariaDB is missing. In order of likelihood:
    startup. Close it, reopen, try `mariadb --version`. This is usually it.
 2. Use the "MariaDB ... Command Prompt" shortcut from the Start menu, where PATH is
    already set.
-3. Find the client and add it to PATH yourself (the version in the path will differ):
+3. Find the client and add it to PATH yourself — the version in the path will differ
+   from the example, so take it from the first command's output:
 
    ```powershell
    Get-ChildItem "C:\Program Files\MariaDB*\bin\maria*.exe" | Select-Object FullName
    [Environment]::SetEnvironmentVariable(
-       "Path", $env:Path + ";C:\Program Files\MariaDB 11.8\bin", "User")
+       "Path", $env:Path + ";C:\Program Files\MariaDB 13.0\bin", "User")
    ```
 
    Then reopen the terminal.
 
 Older builds ship the client as `mysql.exe` rather than `mariadb.exe`; the arguments are
-the same. `Get-Service -Name "MariaDB*"` tells you whether the server is actually running.
+the same.
 
-## Fill the database
+## The loader
 
-An offline batch job -- run it before anyone uses the site.
-
-The database is not in git, so every machine loads its own copy. `backend/articles.txt`
-is the shared list that keeps those copies the same: add a title there rather than
-loading it only locally, and everyone gets it on their next run.
+An offline batch job — run it before anyone uses the site. The database is not in git,
+so every machine loads its own copy; `articles.txt` is the shared list that keeps those
+copies identical.
 
 ```bash
-.venv/bin/python -m backend.loader                             # everything in articles.txt
-.venv/bin/python -m backend.loader Agapanthus "Michael Jackson"  # or name them directly
-.venv/bin/python -m backend.loader --reset                     # wipe revisions first
-.venv/bin/python -m backend.loader --max-revisions 1500 "Albert Einstein"
+.venv/bin/python -m backend.loader                  # the list, skipping what is already loaded
+.venv/bin/python -m backend.loader Agapanthus "Michael Jackson"   # load these now
+.venv/bin/python -m backend.loader --reset          # drop the revisions, load the list again
+.venv/bin/python -m backend.loader --reset --max-revisions 1500   # quick, for testing
 ```
 
-Titles must match Wikipedia's own, the way they appear in the URL. A title that does not
-exist is reported and skipped, the rest still load.
+An article already in the database is skipped, so adding a title to `articles.txt` and
+re-running fetches only that one. That skip is a correctness guard as much as a speed
+one — see the fourth constraint below for why revisions cannot be appended to an article
+that is already loaded. Titles must match Wikipedia's own, as they appear in the URL; a
+title that does not exist is reported and skipped, and the rest still load.
 
-Removing an article takes `--reset` and a full reload: a plain DELETE on a versioned
-table moves rows into history instead of erasing them, and DELETE HISTORY accepts no
-WHERE clause, so there is no way to purge just one article.
+`--max-revisions` keeps the most **recent** revisions, not the oldest — otherwise the
+"this row is current" sentinel would land on a decades-old revision that then claims to
+still be live.
 
-`--max-revisions` keeps the most RECENT revisions. Re-running is safe, and extending an
-article further back in time is safe too, because an interval is fixed by the timestamps
-of its neighbours. Adding revisions *newer* than what is stored is not: the stored newest
-row still claims the "current" sentinel and would overlap. Use `--reset` for that.
+## Constraints worth knowing before you change the schema
 
-## Run
+These four cost real debugging time, and three of them fail silently:
 
-```bash
-.venv/bin/uvicorn backend.app:app --reload
-```
+1. **Period columns must be `TIMESTAMP(6)`, not `DATETIME(6)`** — `DATETIME` gives
+   `ERROR 4110`. `TIMESTAMP` is stored as UTC and converted on the way out, which is why
+   `db.connect()` sets `time_zone = '+00:00'` on every connection. Without that, the
+   rows shift by the client's offset.
 
-Then open http://127.0.0.1:8000/ -- the frontend is served from the same origin, so there
-is no CORS to worry about. Interactive API docs at http://127.0.0.1:8000/docs.
+2. **The "current row" marker is the server's maximum timestamp**, not a value you pick.
+   On MariaDB 13 it is `2106-02-07 06:28:15.999999`; older servers use
+   `2038-01-19 03:14:07.999999`. Guess wrong and every inserted row lands in the history
+   partition, where a plain `SELECT` cannot see it and nothing reports an error.
+   `db.current_row_valid_to()` asks the server instead, and the loader asserts afterwards
+   that a current row is actually visible.
 
-| Endpoint | Purpose |
-|---|---|
-| `GET /api/articles` | loaded articles, for the `<select>` |
-| `GET /api/revision?page_id=&date=YYYY-MM-DD` | which revision was live that day |
-| `GET /api/revision/{revid}/html` | that revision, `<head>` patched for embedding |
-| `GET /api/revision/{revid}/html?full=true` | full page with Wikipedia's skin instead |
+3. **There is no `INSERT HISTORY` privilege** — `GRANT INSERT HISTORY` is `ERROR 1064`.
+   Writing explicit `valid_from`/`valid_to` needs the session variable
+   `SET @@system_versioning_insert_history = ON`, which `db.connect(for_loading=True)` does.
 
-## Wiring the frontend
+4. **`PRIMARY KEY (page_id)` is implicitly `(page_id, valid_to)`** on a versioned table.
+   That is what makes re-running the loader safe: a repeated interval collides with
+   `ERROR 1062` and `INSERT IGNORE` turns it into a skip. It also means a second row with
+   the sentinel `valid_to` cannot exist, so topping an article up with *newer* revisions
+   is not possible — use `--reset`.
 
-`wikimachine.HTML` already has `#articleselect`, `#dateselect` and `#submitbutton`. What
-is missing is filling the select from the API and pointing the iframe at it:
-
-```js
-const select = document.getElementById("articleselect");
-const dateInput = document.getElementById("dateselect");
-const frame = document.querySelector(".window-content");
-
-// Fill the dropdown with what the loader actually put in the database.
-fetch("/api/articles").then(r => r.json()).then(articles => {
-    select.innerHTML = "";
-    for (const a of articles) {
-        const option = document.createElement("option");
-        option.value = String(a.page_id);
-        option.textContent = `${a.title} (${a.revisions} revisions)`;
-        option.dataset.firstDate = a.first_date.slice(0, 10);
-        select.append(option);
-    }
-    clampDate();
-});
-
-// Stop the user picking a date before the article existed.
-function clampDate() {
-    dateInput.min = select.selectedOptions[0]?.dataset.firstDate ?? "2001-01-15";
-    dateInput.max = new Date().toISOString().slice(0, 10);
-    if (!dateInput.value) dateInput.value = dateInput.max;
-}
-select.addEventListener("change", clampDate);
-
-document.getElementById("submitbutton").addEventListener("click", async () => {
-    const response = await fetch(
-        `/api/revision?page_id=${select.value}&date=${dateInput.value}`
-    );
-    if (!response.ok) {
-        alert((await response.json()).detail);
-        return;
-    }
-    const revision = await response.json();
-    frame.src = revision.html_url;
-});
-```
-
-Note: `<script src="wikimachine.ts">` does not run in a browser -- the `.ts` extension
-maps to the MIME type `video/mp2t`, and scripts with a non-executable type are refused.
-Either compile it (`tsc wikimachine.ts` and point `src` at the `.js`) or rename the file.
+Also: `<script src="wikimachine.ts">` does not run in a browser. The `.ts` extension maps
+to the MIME type `video/mp2t` and scripts with a non-executable type are refused silently.
+The file is `wikimachine.js` for that reason; real TypeScript would need `tsc` to compile
+to `.js`, which is what the browser must be handed either way.

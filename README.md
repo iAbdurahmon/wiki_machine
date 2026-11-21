@@ -1,8 +1,10 @@
-# wiki_machine
-project 3 System-versioned tables: history for free for mariaDB student project 2026
+A project for area 3, "System-versioned tables: history for free" for the MariaDB student database projects, 2026-09
 
-the project does not have any features that could be usefully graphed or otherwise measured, it works fine and is quite versatile
-due to its ability to download and display any article it can
+# wiki_machine
+
+the project works fine and is quite versatile due to its ability to download and display any article it can.
+how the versioned table grows, and what partitioning it by SYSTEM_TIME does about that, is measured in
+[Growth, and partitioning by `SYSTEM_TIME`](#growth-and-partitioning-by-system_time)
 
 the aim for the visual elements of the project was to faithfully 
 recreate wikipidea's modern style both for the articles and the student made page itself ( we thought this would be fun and fitting)
@@ -12,7 +14,8 @@ we used system versioning and changed the dates to reflect when the
 revision of an article was added/changed instead of using it to track when we added the articles into our database (which would be useless as we download them at the same time)
 
 here is a screenshot of the website rendered on my computer
-image.png
+
+![Screenshot of wiki_machine showing an article as it stood on a chosen date](image.png)
 
 made by abdurakhmon rakhmanov and nikoloz tsikaridze
 

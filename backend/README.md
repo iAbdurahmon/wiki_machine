@@ -81,6 +81,7 @@ copies identical.
 ```bash
 .venv/bin/python -m backend.loader                  # the list, skipping what is already loaded
 .venv/bin/python -m backend.loader Agapanthus "Michael Jackson"   # load these now
+.venv/bin/python -m backend.loader --refresh Tashkent   # pick up edits made since it was loaded
 .venv/bin/python -m backend.loader --reset          # drop the revisions, load the list again
 .venv/bin/python -m backend.loader --reset --max-revisions 1500   # quick, for testing
 ```
@@ -88,7 +89,7 @@ copies identical.
 An article already in the database is skipped, so adding a title to `articles.txt` and
 re-running fetches only that one. That skip is a correctness guard as much as a speed
 one — see the fourth constraint below for why revisions cannot be appended to an article
-that is already loaded. Titles must match Wikipedia's own, as they appear in the URL; a
+that is already loaded, and `--refresh` for the way around it. Titles must match Wikipedia's own, as they appear in the URL; a
 title that does not exist is reported and skipped, and the rest still load.
 
 `--max-revisions` keeps the most **recent** revisions, not the oldest — otherwise the
@@ -97,7 +98,7 @@ still be live.
 
 ## Constraints worth knowing before you change the schema
 
-These four cost real debugging time, and three of them fail silently:
+These six cost real debugging time, and four of them fail silently:
 
 1. **Period columns must be `TIMESTAMP(6)`, not `DATETIME(6)`** — `DATETIME` gives
    `ERROR 4110`. `TIMESTAMP` is stored as UTC and converted on the way out, which is why
@@ -119,7 +120,20 @@ These four cost real debugging time, and three of them fail silently:
    That is what makes re-running the loader safe: a repeated interval collides with
    `ERROR 1062` and `INSERT IGNORE` turns it into a skip. It also means a second row with
    the sentinel `valid_to` cannot exist, so topping an article up with *newer* revisions
-   is not possible — use `--reset`.
+   in place is not possible. `--refresh` builds a new table beside the live one and swaps
+   it in with `RENAME TABLE` instead — see `replace_articles()` in `loader.py`.
+
+5. **A partitioned table cannot have a `FOREIGN KEY`** — `ERROR 1506`. Partitioning by
+   `SYSTEM_TIME` therefore cost `article_revision` its foreign key to `articles`; the
+   loader writing the `articles` row first is the guarantee that is left.
+
+6. **`PARTITION BY SYSTEM_TIME … AUTO` does nothing for backfilled history.** `AUTO` adds
+   a partition when the server's clock crosses an interval boundary. With a `STARTS` date
+   in the past it creates a single history partition and every backfilled row lands in
+   it, without a warning. The partitions are listed (`PARTITIONS 28`) for that reason.
+   Rows are routed by `valid_to`, so with real timestamps a partition holds the revisions
+   Wikipedia superseded in that year. Only the oldest partitions can be dropped
+   (`ERROR 4116` otherwise).
 
 Also: `<script src="wikimachine.ts">` does not run in a browser. The `.ts` extension maps
 to the MIME type `video/mp2t` and scripts with a non-executable type are refused silently.

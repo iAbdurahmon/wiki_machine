@@ -6,6 +6,7 @@ fetched from the REST API at display time by app.py.
 
     python -m backend.loader                         # articles.txt, skipping what is loaded
     python -m backend.loader Agapanthus "Michael Jackson"
+    python -m backend.loader --refresh Tashkent      # pick up edits made since it was loaded
     python -m backend.loader --reset                 # wipe revisions and load the list again
     python -m backend.loader --reset --max-revisions 500   # newest 500 each, quick to test
 
@@ -18,17 +19,20 @@ The one piece of real logic is build_intervals(): Wikipedia gives MOMENTS ("revi
 2017-02-07 until 2017-03-19"). The closing bound of each revision is the timestamp of
 the next one; the newest revision gets the sentinel that marks a row current.
 
-Skipping a loaded article is a correctness guard, not just a speed one. Re-reading it
-from the API brings back revisions made since the last load, and those cannot be
-appended. PRIMARY KEY (page_id) is implicitly (page_id, valid_to) on a versioned table,
-so the new current row collides with the stored one and is dropped -- while the
-intermediate intervals insert fine and OVERLAP it. Two rows are then live at the same
-instant, FOR SYSTEM_TIME AS OF returns both, and the API quietly reads one of them.
+Why an article cannot simply be topped up in place: PRIMARY KEY (page_id) is implicitly
+(page_id, valid_to) on a versioned table, so a new current row collides with the stored
+one and is dropped -- while the intermediate intervals insert fine and OVERLAP it. Two
+rows are then live at the same instant, FOR SYSTEM_TIME AS OF returns both, and the API
+quietly reads one of them. Repairing the stored current row in place would take an UPDATE
+or DELETE, and on a versioned table both write the server's own clock into valid_to rather
+than the value we need; DELETE HISTORY takes no WHERE clause, so history cannot be purged
+per article either.
 
-So topping an article up means --reset: load the whole list again from scratch. There is
-no cheaper way. Repairing the stored current row would take an UPDATE or DELETE, and on a
-versioned table both write the server's own clock into valid_to rather than the value we
-need (and DELETE HISTORY takes no WHERE clause, so history cannot be purged per article).
+So the plain load refuses to touch a loaded article, and --refresh goes around the
+problem instead of through it: replace_articles() builds a NEW versioned table, copies
+every other article's rows into it with their timestamps intact, writes the refreshed
+articles' fresh intervals, checks it, and swaps it in with one atomic RENAME TABLE. The
+live table answers queries untouched until the swap, and a failed check leaves it as it was.
 """
 
 import argparse
@@ -51,9 +55,12 @@ API = "https://en.wikipedia.org/w/api.php"
 USER_AGENT = "wiki_machine/0.1 (student project; https://github.com/iAbdurahmon/wiki_machine)"
 REVISIONS_PER_REQUEST = 500  # the API cap for ordinary accounts
 SKIPPED = (
-    "already in the database -- skipped. Revisions made since it was loaded cannot "
-    "be appended; --reset reloads everything."
+    "already in the database -- skipped. To pick up edits made since it was loaded, "
+    "run the loader with --refresh and this title."
 )
+LIVE = "article_revision"
+REBUILD = "article_revision_new"
+RETIRED = "article_revision_old"
 
 
 def fetch_revisions(client: httpx.Client, title: str, max_revisions: int | None = None):
@@ -151,15 +158,22 @@ def reset_revisions(conn) -> None:
     print("article_revision recreated")
 
 
-def load(titles: list[str], reset: bool = False, max_revisions: int | None = None) -> None:
+def load(
+    titles: list[str],
+    reset: bool = False,
+    refresh: bool = False,
+    max_revisions: int | None = None,
+) -> None:
     conn = connect(for_loading=True)
     if reset:
         reset_revisions(conn)
     sentinel = current_row_valid_to(conn)
-    # --reset means "load everything again", so nothing is skipped. Note that it
-    # recreates article_revision but not articles, so the titles are still in there --
-    # this cannot be left to loaded_articles() coming back empty.
-    already, already_ids = (set(), set()) if reset else loaded_articles(conn)
+    # --reset and --refresh both mean "fetch these again", so nothing is skipped. Note
+    # that --reset recreates article_revision but not articles, so the titles are still
+    # in there -- this cannot be left to loaded_articles() coming back empty.
+    skip = not (reset or refresh)
+    already, already_ids = loaded_articles(conn) if skip else (set(), set())
+    batch: list[tuple[int, str, list]] = []
 
     with httpx.Client(headers={"User-Agent": USER_AGENT}, timeout=30.0) as client:
         for title in titles:
@@ -181,41 +195,112 @@ def load(titles: list[str], reset: bool = False, max_revisions: int | None = Non
             if page_id in already_ids:
                 print(f"  {SKIPPED}")
                 continue
+            if any(page_id == queued for queued, _, _ in batch):
+                print("  same article as an earlier title -- skipped")
+                continue
 
             rows = build_intervals(revisions, sentinel)
-            with conn.cursor() as cur:
-                cur.execute(
-                    "INSERT INTO articles (page_id, title) VALUES (%s, %s) "
-                    "ON DUPLICATE KEY UPDATE title = VALUES(title)",
-                    (page_id, canonical),
-                )
-                # INSERT IGNORE turns the expected duplicate-interval collision (1062)
-                # into a skip, which is what makes a re-run safe.
-                cur.executemany(
-                    "INSERT IGNORE INTO article_revision "
-                    "(page_id, revid, valid_from, valid_to) VALUES (%s, %s, %s, %s)",
-                    [(page_id, revid, start, end) for revid, start, end in rows],
-                )
-                inserted = cur.rowcount
+            if refresh:
+                print(f"  page_id={page_id}  revisions={len(revisions)}  fetched")
+                batch.append((page_id, canonical, rows))
+                continue
 
+            with conn.cursor() as cur:
+                inserted = write_article(cur, LIVE, page_id, canonical, rows)
             print(
                 f"  page_id={page_id}  revisions={len(revisions)}  "
                 f"inserted={inserted}  skipped={len(rows) - inserted}  "
                 f"span={rows[0][1][:10]}..{rows[-1][1][:10]}"
             )
+            check_current(conn, LIVE, page_id, canonical, rows, sentinel)
 
-            # A current row must now be visible to a PLAIN select. If it is not, the
-            # sentinel was wrong and every row landed in history -- which breaks
-            # silently, so fail loudly here instead.
-            with conn.cursor() as cur:
-                cur.execute("SELECT revid FROM article_revision WHERE page_id = %s", (page_id,))
-                current = cur.fetchone()
-            if current is None or current["revid"] != rows[-1][0]:
-                raise RuntimeError(
-                    f"{canonical}: no current row after loading. The server's sentinel is "
-                    f"{sentinel!r}; rows went into history and a plain SELECT cannot see them."
-                )
+    if refresh and batch:
+        replace_articles(conn, batch, sentinel)
     conn.close()
+
+
+def write_article(cur, table: str, page_id: int, canonical: str, rows) -> int:
+    """Upsert the article and insert its intervals into `table`. Returns rows inserted."""
+    cur.execute(
+        "INSERT INTO articles (page_id, title) VALUES (%s, %s) "
+        "ON DUPLICATE KEY UPDATE title = VALUES(title)",
+        (page_id, canonical),
+    )
+    # INSERT IGNORE turns the expected duplicate-interval collision (1062) into a skip,
+    # which is what makes a re-run safe. `table` is one of the constants above, never input.
+    cur.executemany(
+        f"INSERT IGNORE INTO {table} "
+        "(page_id, revid, valid_from, valid_to) VALUES (%s, %s, %s, %s)",
+        [(page_id, revid, start, end) for revid, start, end in rows],
+    )
+    return cur.rowcount
+
+
+def check_current(conn, table: str, page_id: int, canonical: str, rows, sentinel: str) -> None:
+    """A current row must be visible to a PLAIN select, and it must be the newest revision.
+
+    If it is not, the sentinel was wrong and every row landed in history -- which breaks
+    silently, so fail loudly here instead.
+    """
+    with conn.cursor() as cur:
+        cur.execute(f"SELECT revid FROM {table} WHERE page_id = %s", (page_id,))
+        current = cur.fetchall()
+    if len(current) != 1 or current[0]["revid"] != rows[-1][0]:
+        raise RuntimeError(
+            f"{canonical}: expected exactly one current row (revid {rows[-1][0]}), found "
+            f"{[row['revid'] for row in current]}. The server's sentinel is {sentinel!r}."
+        )
+
+
+def replace_articles(conn, batch, sentinel: str) -> None:
+    """Swap fresh history for the articles in `batch`, leaving every other article as is.
+
+    In-place repair is impossible on a versioned table (see the module docstring), so this
+    builds the table again beside the live one and swaps:
+
+      1. CREATE TABLE ... LIKE copies the columns, the system versioning AND the
+         partitioning -- the new table is the same kind of table, not a lookalike.
+      2. INSERT ... SELECT ... FOR SYSTEM_TIME ALL copies every other article, history
+         included. With system_versioning_insert_history on (db.connect(for_loading=True))
+         the original valid_from / valid_to are kept instead of being restamped "now".
+      3. The refreshed articles' intervals go in, and each is checked.
+      4. RENAME TABLE swaps both names in one atomic step, so a reader sees the old table
+         or the new one, never neither.
+
+    The cost is a copy of the whole table -- about a second for 82,000 rows -- rather than
+    of the articles that changed. That is the price of letting the server own the clock.
+    """
+    ids = [page_id for page_id, _, _ in batch]
+    marks = ", ".join(["%s"] * len(ids))
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"DROP TABLE IF EXISTS {REBUILD}")
+            cur.execute(f"CREATE TABLE {REBUILD} LIKE {LIVE}")
+            cur.execute(
+                f"INSERT INTO {REBUILD} (page_id, revid, valid_from, valid_to) "
+                f"SELECT page_id, revid, valid_from, valid_to "
+                f"FROM {LIVE} FOR SYSTEM_TIME ALL WHERE page_id NOT IN ({marks})",
+                ids,
+            )
+            print(f"\ncopied {cur.rowcount} rows of the other articles into {REBUILD}")
+            for page_id, canonical, rows in batch:
+                inserted = write_article(cur, REBUILD, page_id, canonical, rows)
+                print(
+                    f"  {canonical}: inserted={inserted}  "
+                    f"span={rows[0][1][:10]}..{rows[-1][1][:10]}"
+                )
+        for page_id, canonical, rows in batch:
+            check_current(conn, REBUILD, page_id, canonical, rows, sentinel)
+    except Exception:
+        with conn.cursor() as cur:
+            cur.execute(f"DROP TABLE IF EXISTS {REBUILD}")
+        print(f"refresh failed -- {LIVE} was not touched")
+        raise
+
+    with conn.cursor() as cur:
+        cur.execute(f"RENAME TABLE {LIVE} TO {RETIRED}, {REBUILD} TO {LIVE}")
+        cur.execute(f"DROP TABLE {RETIRED}")  # DROP is also the only way to purge its history
+    print(f"swapped in: {LIVE} now holds the refreshed articles")
 
 
 def loaded_articles(conn) -> tuple[set[str], set[int]]:
@@ -260,13 +345,20 @@ def main() -> None:
         help="recreate article_revision and load every title again from scratch",
     )
     parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help="fetch these titles again and swap their history in, keeping every other article",
+    )
+    parser.add_argument(
         "--max-revisions",
         type=int,
         help="keep only this many of the most recent revisions per article",
     )
     args = parser.parse_args()
+    if args.reset and args.refresh:
+        parser.error("--reset already reloads everything; use one or the other")
     titles = args.titles or read_article_list()
-    load(titles, reset=args.reset, max_revisions=args.max_revisions)
+    load(titles, reset=args.reset, refresh=args.refresh, max_revisions=args.max_revisions)
 
 
 if __name__ == "__main__":

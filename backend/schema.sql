@@ -45,6 +45,25 @@ CREATE TABLE IF NOT EXISTS article_revision (
 -- in the versioned table, the PRIMARY KEY is implicitly extended to (page_id, valid_to),
 -- providing free protection against reloading the same interval
   PRIMARY KEY (page_id),
-  KEY idx_revid (revid),
-  CONSTRAINT fk_article FOREIGN KEY (page_id) REFERENCES articles(page_id)
-) ENGINE=InnoDB WITH SYSTEM VERSIONING;
+  KEY idx_revid (revid)
+-- No FOREIGN KEY to articles: partitioned InnoDB tables refuse one (ERROR 1506). The loader
+-- writes the articles row before any revision, which is the guarantee that is left.
+) ENGINE=InnoDB WITH SYSTEM VERSIONING
+-- One history partition per calendar year of WIKIPEDIA time, 2001 (Wikipedia's founding)
+-- to 2027, plus the current partition. A row goes to the partition holding its valid_to,
+-- and because the loader backfills real timestamps, that is the year the revision was
+-- superseded on Wikipedia -- not the day the loader ran.
+--
+-- What it buys and costs, measured against an unpartitioned copy (backend/growth.py):
+--   * a plain SELECT of every current revision reads one partition: 6 rows, not ~85,000
+--   * FOR SYSTEM_TIME AS OF t skips every partition that closed before t -- about half
+--     the rows examined for a 2010 or 2016 date, no gain for a recent one
+--   * DELETE HISTORY ... BEFORE SYSTEM_TIME and DROP PARTITION remove whole eras at once
+--   * cost: ~20% more disk (13.6 MB vs 11.3 MB), 16 KB per partition even when empty
+--
+-- The partitions are listed (PARTITIONS 28), not AUTO: AUTO only adds a partition when
+-- the server's clock crosses an interval boundary, so with a STARTS date in the past it
+-- creates a single history partition and every backfilled row lands in it. Revisions
+-- superseded after 2027 go to the last history partition until one is added with
+--   ALTER TABLE article_revision ADD PARTITION (PARTITION p27 HISTORY);
+PARTITION BY SYSTEM_TIME INTERVAL 1 YEAR STARTS '2001-01-01 00:00:00' PARTITIONS 28;

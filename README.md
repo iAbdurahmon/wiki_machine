@@ -1,5 +1,5 @@
 # wiki_machine
-project 3 System-versioned tables: history for free
+project 3 System-versioned tables: history for free for mariaDB student project 2026
 
 the project does not have any features that could be usefully graphed or otherwise measured, it works fine and is quite versatile
 due to its ability to download and display any article it can
@@ -15,6 +15,8 @@ here is a screenshot of the website rendered on my computer
 image.png
 
 made by abdurakhmon rakhmanov and nikoloz tsikaridze
+
+
 
 Pick a Wikipedia article and a date, and see the article as it looked on that date.
 

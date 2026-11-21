@@ -1,7 +1,14 @@
 # wiki_machine
 project 3 System-versioned tables: history for free
 
+the project does not have any features that could be usefully graphed or otherwise measured, it works fine and is quite versatile
+due to its ability to download and display any article it can
 
+the aim for the visual elements of the project was to faithfully 
+recreate wikipidea's modern style both for the articles and the student made page itself ( we thought this would be fun and fitting)
+
+we used system versioning and changed the dates to reflect when the
+revision of an article was added/changed instead of using it to track when we added the articles into our database (which would be useless as we download them at the same time)
 
 
 Pick a Wikipedia article and a date, and see the article as it looked on that date.

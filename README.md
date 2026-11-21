@@ -6,10 +6,15 @@ due to its ability to download and display any article it can
 
 the aim for the visual elements of the project was to faithfully 
 recreate wikipidea's modern style both for the articles and the student made page itself ( we thought this would be fun and fitting)
+photos and links still work, though the HTML styling was standardised to the modern version using minerva
 
 we used system versioning and changed the dates to reflect when the
 revision of an article was added/changed instead of using it to track when we added the articles into our database (which would be useless as we download them at the same time)
 
+here is a screenshot of the website rendered on my computer
+image.png
+
+made by abdurakhmon rakhmanov and nikoloz tsikaridze
 
 Pick a Wikipedia article and a date, and see the article as it looked on that date.
 
